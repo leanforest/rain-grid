@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>雨格 Rain Grid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap">
+<style>
+  /* Layout: full-bleed WebGL stage; a quiet glass control deck pinned bottom-left, readout top-left. Single dark look by design. */
+  :root {
+    --bg: #0c0d11;
+    --ink: #e8ebf2;
+    --mute: #8b91a3;
+    --line: rgba(196, 210, 255, 0.10);
+    --panel: rgba(15, 16, 22, 0.64);
+    --accent: #19e6f0;
+    --display: 'Chakra Petch', 'Noto Sans SC', system-ui, sans-serif;
+    --body: 'Noto Sans SC', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); overflow: hidden; }
+  body { font: 13px/1.5 var(--body); -webkit-font-smoothing: antialiased; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; outline: none; }
+  #c.dragging { cursor: grabbing; }
+
+  .hud {
+    position: fixed;
+    top: calc(18px + env(safe-area-inset-top, 0px));
+    left: calc(18px + env(safe-area-inset-left, 0px));
+    pointer-events: none;
+    display: grid; gap: 6px;
+  }
+  .brand { font: 600 22px/1 var(--display); letter-spacing: 0.06em; display: flex; align-items: baseline; gap: 10px; }
+  .brand small { font: 500 11px/1 var(--mono); letter-spacing: 0.22em; color: var(--mute); }
+  .readout { font: 400 11.5px/1.4 var(--mono); color: var(--mute); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+  .readout b { color: var(--ink); font-weight: 500; }
+
+  .panel {
+    position: fixed;
+    left: calc(16px + env(safe-area-inset-left, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    width: min(328px, calc(100vw - 32px));
+    box-sizing: border-box;
+    background: var(--panel);
+    -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    backdrop-filter: blur(16px) saturate(1.3);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px 14px 14px;
+    display: grid; gap: 12px;
+  }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .panel-head span { font: 500 11px/1 var(--mono); letter-spacing: 0.2em; color: var(--mute); text-transform: uppercase; }
+  .panel-body { display: grid; gap: 14px; }
+  .panel.collapsed .panel-body { display: none; }
+  .field { display: grid; gap: 7px; }
+  .field-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .field-top label, .field-top .lbl { font-size: 12px; color: var(--mute); }
+  .field-top output { font: 500 12px/1 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .seg { display: flex; flex-wrap: wrap; gap: 5px; }
+  button.chip {
+    font: 500 12px/1 var(--body);
+    color: var(--mute);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 11px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: color .15s, background .15s, border-color .15s;
+  }
+  button.chip:hover { color: var(--ink); border-color: rgba(196, 210, 255, 0.24); }
+  button.chip[aria-pressed="true"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+  button.chip:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sw { width: 22px; height: 8px; border-radius: 4px; flex: none; }
+  .ghost { font: 500 11px/1 var(--mono); color: var(--mute); background: none; border: 0; cursor: pointer; padding: 4px 2px; letter-spacing: 0.08em; }
+  .ghost:hover { color: var(--ink); }
+  .ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 2px; background: rgba(196, 210, 255, 0.18); border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 2px; background: rgba(196, 210, 255, 0.18); border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 3px; background: var(--ink); margin-top: -5px; box-shadow: 0 0 0 3px rgba(25, 230, 240, 0.18); }
+  input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 3px; background: var(--ink); }
+
+  .hint {
+    position: fixed;
+    right: calc(18px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    font: 400 11px/1.9 var(--mono); color: var(--mute); text-align: right; pointer-events: none;
+    letter-spacing: 0.02em;
+  }
+  .hint kbd { font: inherit; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  body.ui-off .hud, body.ui-off .panel, body.ui-off .hint { display: none; }
+  .err { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--mute); }
+  @media (max-width: 720px) { .hint { display: none; } .brand { font-size: 19px; } }
+</style>
+</head>
+<body>
+
+<canvas id="c" tabindex="0" aria-label="三维雨景：雨滴落在发光的瓷砖网格上，点击可以在该位置降雨"></canvas>
+
+<header class="hud">
+  <div class="brand">雨格 <small>RAIN · GRID</small></div>
+  <div class="readout">镜头 <b id="r-shot">自动 · 等距</b> · <b id="r-rate">55</b> 滴/秒 · 落点 <b id="r-hits">0</b></div>
+</header>
+
+<section class="panel" id="panel" aria-label="控制面板">
+  <div class="panel-head">
+    <span>Controls</span>
+    <div>
+      <button class="ghost" id="b-collapse" aria-expanded="true">收起</button>
+      <button class="ghost" id="b-hide" title="隐藏界面 (H)">隐藏 H</button>
+    </div>
+  </div>
+  <div class="panel-body">
+    <div class="field">
+      <div class="field-top"><span class="lbl">镜头</span></div>
+      <div class="seg" id="shots">
+        <button class="chip" data-shot="auto" aria-pressed="true">自动</button>
+        <button class="chip" data-shot="iso" aria-pressed="false">等距</button>
+        <button class="chip" data-shot="top" aria-pressed="false">俯视</button>
+        <button class="chip" data-shot="low" aria-pressed="false">低空</button>
+        <button class="chip" data-shot="orbit" aria-pressed="false">环绕</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-top"><label for="rate">雨量</label><output id="o-rate" for="rate">55 滴/秒</output></div>
+      <input type="range" id="rate" min="0" max="220" value="55">
+    </div>
+    <div class="field">
+      <div class="field-top"><label for="wind">风</label><output id="o-wind" for="wind">无风</output></div>
+      <input type="range" id="wind" min="-100" max="100" value="0">
+    </div>
+    <div class="field">
+      <div class="field-top"><span class="lbl">色板</span></div>
+      <div class="seg" id="pals"></div>
+    </div>
+    <div class="field">
+      <div class="field-top"><span class="lbl">天气与声音</span></div>
+      <div class="seg">
+        <button class="chip" id="b-sound" aria-pressed="false">声音</button>
+        <button class="chip" id="b-storm" aria-pressed="false">自动雷暴</button>
+        <button class="chip" id="b-thunder" aria-pressed="false">落雷 ␣</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="hint">
+  拖拽 旋转 · 滚轮 缩放 · 点击 召唤雨<br>
+  <kbd>1</kbd>–<kbd>5</kbd> 镜头 · <kbd>Space</kbd> 落雷 · <kbd>S</kbd> 声音 · <kbd>H</kbd> 隐藏
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const $ = (s) => document.querySelector(s);
+const rand = Math.random;
+const pick = (a) => a[(rand() * a.length) | 0];
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ------------------------------------------------------------------ palettes */
+const PALETTES = {
+  neon:    { name: '霓虹', tiles: ['#19e6f0', '#ffe81a', '#ff6fd0', '#ff4f8a', '#ff7a1a', '#ffffff', '#2be0b0', '#2a9df4', '#e8364a', '#8ff3ff'],
+             rain: ['#19e6f0', '#19e6f0', '#ffe81a', '#ffffff', '#ff8fdc', '#ffe81a'] },
+  aurora:  { name: '极光', tiles: ['#3cf2a6', '#22d3ee', '#7c5cff', '#b16cff', '#2b7fff', '#a7f3d0', '#5eead4'],
+             rain: ['#a7f3d0', '#3cf2a6', '#22d3ee', '#c4b5fd', '#ffffff'] },
+  ember:   { name: '熔金', tiles: ['#ff7a1a', '#ffb020', '#ff4d2e', '#ffd166', '#ff3d6e', '#fff1d6', '#e0531a'],
+             rain: ['#ffd166', '#ffb020', '#fff1d6', '#ff7a1a', '#ff4d2e'] },
+  glacier: { name: '冰川', tiles: ['#8ff3ff', '#19e6f0', '#4aa8ff', '#c9f6ff', '#ffffff', '#2a6df4'],
+             rain: ['#ffffff', '#c9f6ff', '#8ff3ff', '#19e6f0'] },
+};
+for (const p of Object.values(PALETTES)) {
+  p.tileC = p.tiles.map((h) => new THREE.Color(h));
+  p.rainC = p.rain.map((h) => new THREE.Color(h));
+}
+let PAL = PALETTES.neon;
+
+/* ------------------------------------------------------------------ renderer */
+const canvas = $('#c');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+} catch (e) {
+  document.body.insertAdjacentHTML('beforeend', '<div class="err">这台设备无法启动 WebGL。请换用支持 WebGL 2 的浏览器后重新打开。</div>');
+  throw e;
+}
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(DPR);
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.NoToneMapping;
+
+const scene = new THREE.Scene();
+const BG = new THREE.Color('#0c0d11');
+const bgNow = BG.clone();
+scene.background = bgNow;
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.1, 500);
+
+const U = {
+  uTime: { value: 0 },
+  uFlash: { value: 0 },
+  uBg: { value: BG },
+  uFogNear: { value: 30 },
+  uFogFar: { value: 90 },
+};
+const FOG = /* glsl */`
+  uniform vec3 uBg; uniform float uFogNear; uniform float uFogFar;
+  float fogF(float d){ return 1.0 - smoothstep(uFogNear, uFogFar, d); }
+`;
+
+/* ------------------------------------------------------------------ grid of tiles */
+const N = 22, SP = 1.0, HALF = (N - 1) * SP / 2, TILE = 0.84, TH = 0.16, TOP = TH / 2;
+const TC = N * N;
+const tileX = new Float32Array(TC), tileZ = new Float32Array(TC);
+for (let iz = 0; iz < N; iz++) for (let ix = 0; ix < N; ix++) {
+  const i = iz * N + ix; tileX[i] = -HALF + ix * SP; tileZ[i] = -HALF + iz * SP;
+}
+const baseCur = new Float32Array(TC * 3), baseTgt = new Float32Array(TC * 3);
+const glow = new Float32Array(TC * 3), core = new Float32Array(TC), ant = new Float32Array(TC * 3);
+const wh = new Float32Array(TC), wv = new Float32Array(TC);
+
+const boxG = new THREE.BoxGeometry(TILE, TH, TILE);
+const tileGeo = new THREE.InstancedBufferGeometry();
+tileGeo.index = boxG.index;
+tileGeo.setAttribute('position', boxG.attributes.position);
+tileGeo.setAttribute('normal', boxG.attributes.normal);
+tileGeo.setAttribute('uv', boxG.attributes.uv);
+const aOff = new THREE.InstancedBufferAttribute(new Float32Array(TC * 3), 3).setUsage(THREE.DynamicDrawUsage);
+const aBase = new THREE.InstancedBufferAttribute(new Float32Array(TC * 3), 3).setUsage(THREE.DynamicDrawUsage);
+const aGlow = new THREE.InstancedBufferAttribute(new Float32Array(TC * 4), 4).setUsage(THREE.DynamicDrawUsage);
+tileGeo.setAttribute('iOffset', aOff);
+tileGeo.setAttribute('iBase', aBase);
+tileGeo.setAttribute('iGlow', aGlow);
+tileGeo.instanceCount = TC;
+
+const tileMat = new THREE.ShaderMaterial({
+  uniforms: U,
+  vertexShader: /* glsl */`
+    attribute vec3 iOffset; attribute vec3 iBase; attribute vec4 iGlow;
+    varying vec3 vN; varying vec2 vUv; varying vec3 vBase; varying vec4 vGlow; varying float vLy; varying float vDist;
+    void main(){
+      vec3 p = position + iOffset;
+      vec4 wp = modelMatrix * vec4(p, 1.0);
+      vN = normal; vUv = uv; vBase = iBase; vGlow = iGlow; vLy = position.y / ${TH.toFixed(3)} + 0.5;
+      vec4 mv = viewMatrix * wp; vDist = -mv.z;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */`
+    uniform float uFlash;
+    ${FOG}
+    varying vec3 vN; varying vec2 vUv; varying vec3 vBase; varying vec4 vGlow; varying float vLy; varying float vDist;
+    float sdRound(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
+    void main(){
+      vec3 col;
+      if (vN.y > 0.5) {
+        vec2 p = vUv - 0.5;
+        float d = sdRound(p, vec2(0.43), 0.13) + 0.035;
+        float aa = fwidth(d) * 1.25;
+        float line = 1.0 - smoothstep(0.012, 0.012 + aa, abs(d));
+        float inside = 1.0 - smoothstep(-aa, aa, d);
+        float halo = exp(-abs(d) * 26.0) * inside;
+        col = vec3(0.0105, 0.0112, 0.0145);
+        col += vBase * (line * 0.026 + inside * 0.002);
+        col += vGlow.rgb * (line * 1.25 + halo * 0.22 + inside * 0.035);
+        float dc = length(p);
+        float dotR = 0.07 + 0.05 * clamp(vGlow.a, 0.0, 1.0);
+        float dotA = 1.0 - smoothstep(dotR, dotR + fwidth(dc) * 1.5, dc);
+        col += normalize(vGlow.rgb + 1e-4) * vGlow.a * dotA * 0.9;
+      } else if (vN.y < -0.5) {
+        col = vec3(0.0);
+      } else {
+        col = vec3(0.0055, 0.006, 0.008) + vGlow.rgb * 0.30 * vLy * vLy + vBase * 0.012 * vLy;
+      }
+      float f = fogF(vDist);
+      gl_FragColor = vec4(mix(uBg, col, f), 1.0);
+    }`,
+});
+const tiles = new THREE.Mesh(tileGeo, tileMat);
+tiles.frustumCulled = false;
+scene.add(tiles);
+
+function setPalette(key) {
+  PAL = PALETTES[key];
+  for (let i = 0; i < TC; i++) {
+    const c = pick(PAL.tileC);
+    const k = 0.45 + rand() * 0.45;
+    baseTgt[i * 3] = c.r * k; baseTgt[i * 3 + 1] = c.g * k; baseTgt[i * 3 + 2] = c.b * k;
+  }
+}
+
+/* ------------------------------------------------------------------ rain streaks */
+const MAXD = 1400;
+const drops = Array.from({ length: MAXD }, () => ({ on: false, c: new THREE.Color() }));
+let dCursor = 0;
+const plane = new THREE.PlaneGeometry(1, 1);
+function instGeo(attrs, count) {
+  const g = new THREE.InstancedBufferGeometry();
+  g.index = plane.index;
+  g.setAttribute('position', plane.attributes.position);
+  const out = {};
+  for (const [name, size] of Object.entries(attrs)) {
+    out[name] = new THREE.InstancedBufferAttribute(new Float32Array(count * size), size).setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute(name, out[name]);
+  }
+  g.instanceCount = 0;
+  return [g, out];
+}
+const [rainGeo, RA] = instGeo({ iPos: 3, iDir: 3, iColor: 4, iParams: 3 }, MAXD);
+const rainMat = new THREE.ShaderMaterial({
+  uniforms: U,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  vertexShader: /* glsl */`
+    attribute vec3 iPos; attribute vec3 iDir; attribute vec4 iColor; attribute vec3 iParams;
+    varying float vT; varying float vX; varying vec4 vColor; varying float vY; varying float vFloor; varying float vDist;
+    void main(){
+      vec3 axis = -iDir;
+      vec3 toCam = normalize(cameraPosition - iPos);
+      vec3 side = cross(axis, toCam);
+      float sl = length(side);
+      side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
+      float t = position.y + 0.5;
+      vec3 wp = iPos + axis * t * iParams.x + side * position.x * iParams.y;
+      vT = t; vX = position.x * 2.0; vColor = iColor; vY = wp.y; vFloor = iParams.z;
+      vec4 mv = viewMatrix * vec4(wp, 1.0); vDist = -mv.z;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */`
+    ${FOG}
+    varying float vT; varying float vX; varying vec4 vColor; varying float vY; varying float vFloor; varying float vDist;
+    void main(){
+      if (vY < vFloor) discard;
+      float t = clamp(vT, 0.0, 1.0), x = clamp(vX, -1.0, 1.0);
+      float tail = pow(1.0 - t, 1.35);
+      float a = tail * (1.0 - x * x);
+      float head = smoothstep(0.86, 1.0, 1.0 - t);
+      vec3 c = vColor.rgb * (0.75 + 1.3 * head);
+      float abyss = smoothstep(-16.0, 0.0, vY);
+      gl_FragColor = vec4(c * a * vColor.a * abyss * fogF(vDist), 1.0);
+    }`,
+});
+const rain = new THREE.Mesh(rainGeo, rainMat);
+rain.frustumCulled = false;
+rain.renderOrder = 3;
+scene.add(rain);
+
+/* ------------------------------------------------------------------ squircle ripples */
+const MAXR = 640;
+const [ripGeo, PA] = instGeo({ iPos: 3, iCol: 3, iTime: 4, iShape: 2 }, MAXR);
+for (let i = 0; i < MAXR; i++) { PA.iTime.array[i * 4] = -100; PA.iTime.array[i * 4 + 1] = 1; }
+ripGeo.instanceCount = MAXR;
+let rCursor = 0, ripDirty = true;
+const ripMat = new THREE.ShaderMaterial({
+  uniforms: U,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  vertexShader: /* glsl */`
+    uniform float uTime;
+    attribute vec3 iPos; attribute vec3 iCol; attribute vec4 iTime; attribute vec2 iShape;
+    varying vec2 vL; varying vec3 vC; varying vec4 vT; varying vec2 vS; varying float vDist;
+    void main(){
+      float age = (uTime - iTime.x) / iTime.y;
+      float Q = iTime.z + iShape.y * 2.0 + 0.06;
+      vec2 L = position.xy * 2.0 * Q;
+      vec3 wp = iPos + vec3(L.x, 0.0, L.y);
+      vL = L; vC = iCol; vT = iTime; vS = iShape;
+      vec4 mv = viewMatrix * vec4(wp, 1.0); vDist = -mv.z;
+      gl_Position = projectionMatrix * mv;
+      if (age < 0.0 || age > 1.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }`,
+  fragmentShader: /* glsl */`
+    uniform float uTime;
+    ${FOG}
+    varying vec2 vL; varying vec3 vC; varying vec4 vT; varying vec2 vS; varying float vDist;
+    float sq(vec2 p, float n){ p = abs(p) + 1e-5; return pow(pow(p.x, n) + pow(p.y, n), 1.0 / n); }
+    void main(){
+      float age = (uTime - vT.x) / vT.y;
+      if (age < 0.0 || age > 1.0) discard;
+      age = clamp(age, 0.0, 1.0);
+      float d = sq(vL, vS.x);
+      float e = 1.0 - pow(1.0 - age, 3.0);
+      float aa = fwidth(d) * 1.2;
+      float a;
+      float fade = pow(1.0 - age, 1.7);
+      if (vT.w < 0.5) {
+        float r = 0.08 + e * vT.z;
+        float th = vS.y * (1.0 - 0.55 * age);
+        a = 1.0 - smoothstep(th * 0.5, th * 0.5 + aa, abs(d - r));
+      } else if (vT.w < 1.5) {
+        float r = 0.08 + e * vT.z;
+        float th = vS.y * (1.0 - 0.5 * age);
+        a = 1.0 - smoothstep(th * 0.5, th * 0.5 + aa, abs(d - r));
+        a = max(a, 0.7 * (1.0 - smoothstep(th * 0.4, th * 0.4 + aa, abs(d - r * 0.6))));
+        a = max(a, 0.45 * (1.0 - smoothstep(th * 0.3, th * 0.3 + aa, abs(d - r * 0.3))));
+      } else {
+        float r = vT.z * (0.55 + 0.45 * e);
+        a = 1.0 - smoothstep(r, r + aa, d);
+        fade = pow(1.0 - age, 2.4);
+      }
+      gl_FragColor = vec4(vC * a * fade * 0.95 * fogF(vDist), 1.0);
+    }`,
+});
+const ripples = new THREE.Mesh(ripGeo, ripMat);
+ripples.frustumCulled = false;
+ripples.renderOrder = 2;
+scene.add(ripples);
+
+function addRipple(x, z, c, start, dur, maxR, type, n, thick, gain) {
+  const i = rCursor; rCursor = (rCursor + 1) % MAXR;
+  PA.iPos.array.set([x, TOP + 0.022, z], i * 3);
+  PA.iCol.array.set([c.r * gain, c.g * gain, c.b * gain], i * 3);
+  PA.iTime.array.set([start, dur, maxR, type], i * 4);
+  PA.iShape.array.set([n, thick], i * 2);
+  ripDirty = true;
+}
+
+/* ------------------------------------------------------------------ splash droplets */
+const MAXP = 3200;
+const P = {
+  x: new Float32Array(MAXP), y: new Float32Array(MAXP), z: new Float32Array(MAXP),
+  vx: new Float32Array(MAXP), vy: new Float32Array(MAXP), vz: new Float32Array(MAXP),
+  life: new Float32Array(MAXP), max: new Float32Array(MAXP), size: new Float32Array(MAXP),
+  r: new Float32Array(MAXP), g: new Float32Array(MAXP), b: new Float32Array(MAXP),
+  alive: new Uint8Array(MAXP), bounced: new Uint8Array(MAXP),
+};
+let pCursor = 0;
+const spGeo = new THREE.BufferGeometry();
+const spPos = new THREE.BufferAttribute(new Float32Array(MAXP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+const spCol = new THREE.BufferAttribute(new Float32Array(MAXP * 4), 4).setUsage(THREE.DynamicDrawUsage);
+const spSize = new THREE.BufferAttribute(new Float32Array(MAXP), 1).setUsage(THREE.DynamicDrawUsage);
+spGeo.setAttribute('position', spPos); spGeo.setAttribute('aColor', spCol); spGeo.setAttribute('aSize', spSize);
+spGeo.setDrawRange(0, 0);
+const uScale = { value: 400 };
+const spMat = new THREE.ShaderMaterial({
+  uniforms: { ...U, uScale },
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: /* glsl */`
+    uniform float uScale;
+    attribute vec4 aColor; attribute float aSize;
+    varying vec4 vC; varying float vDist;
+    void main(){
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vDist = -mv.z; vC = aColor;
+      gl_PointSize = max(1.5, aSize * uScale / vDist);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */`
+    ${FOG}
+    varying vec4 vC; varying float vDist;
+    void main(){
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.05, d);
+      gl_FragColor = vec4(vC.rgb * a * vC.a * 1.2 * fogF(vDist), 1.0);
+    }`,
+});
+const splashes = new THREE.Points(spGeo, spMat);
+splashes.frustumCulled = false;
+splashes.renderOrder = 4;
+scene.add(splashes);
+
+function splash(x, z, c, count, s) {
+  for (let k = 0; k < count; k++) {
+    const i = pCursor; pCursor = (pCursor + 1) % MAXP;
+    const ang = rand() * Math.PI * 2, sp = (0.7 + rand() * 2.3) * (0.7 + s * 0.35);
+    P.x[i] = x; P.y[i] = TOP + 0.03; P.z[i] = z;
+    P.vx[i] = Math.cos(ang) * sp; P.vz[i] = Math.sin(ang) * sp; P.vy[i] = 2.2 + rand() * 3.6 * s;
+    P.life[i] = 0; P.max[i] = 0.45 + rand() * 0.6; P.size[i] = 0.035 + rand() * 0.05;
+    const w = rand() < 0.25 ? 0.6 : 0;
+    P.r[i] = c.r + (1 - c.r) * w; P.g[i] = c.g + (1 - c.g) * w; P.b[i] = c.b + (1 - c.b) * w;
+    P.alive[i] = 1; P.bounced[i] = 0;
+  }
+}
+
+/* ------------------------------------------------------------------ sound */
+class Sound {
+  constructor() { this.on = false; this.ctx = null; this.last = 0; }
+  init() {
+    const ctx = this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    this.master = ctx.createGain(); this.master.gain.value = 0.8;
+    const comp = ctx.createDynamicsCompressor();
+    this.master.connect(comp); comp.connect(ctx.destination);
+    const len = ctx.sampleRate * 3.2, ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (rand() * 2 - 1) * Math.pow(1 - i / len, 3.4); }
+    this.verb = ctx.createConvolver(); this.verb.buffer = ir;
+    const wet = ctx.createGain(); wet.gain.value = 0.6; this.verb.connect(wet); wet.connect(this.master);
+    const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    { const d = nb.getChannelData(0); let last = 0; for (let i = 0; i < d.length; i++) { const w = rand() * 2 - 1; last = (last + 0.04 * w) / 1.04; d[i] = w * 0.6 + last * 2.5; } }
+    this.noise = nb;
+    const src = ctx.createBufferSource(); src.buffer = nb; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 0.45;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
+    this.bed = ctx.createGain(); this.bed.gain.value = 0;
+    src.connect(bp); bp.connect(lp); lp.connect(this.bed); this.bed.connect(this.master);
+    src.start();
+  }
+  bedLevel() { return 0.012 + (rate / 220) * 0.11; }
+  toggle() {
+    if (!this.ctx) this.init();
+    this.on = !this.on;
+    if (this.on) this.ctx.resume();
+    this.bed.gain.setTargetAtTime(this.on ? this.bedLevel() : 0, this.ctx.currentTime, 0.4);
+    return this.on;
+  }
+  setRate() { if (this.ctx && this.on) this.bed.gain.setTargetAtTime(this.bedLevel(), this.ctx.currentTime, 0.5); }
+  pluck(freq, pan, vel) {
+    if (!this.on) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (t - this.last < 0.055) return;
+    this.last = t;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16 * vel, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+    const o1 = ctx.createOscillator(); o1.type = 'sine'; o1.frequency.value = freq;
+    const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = freq * 2.003;
+    const g2 = ctx.createGain(); g2.gain.value = 0.22;
+    const p = ctx.createStereoPanner(); p.pan.value = clamp(pan, -1, 1);
+    o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(p); p.connect(this.master); p.connect(this.verb);
+    o1.start(t); o2.start(t); o1.stop(t + 1.6); o2.stop(t + 1.6);
+  }
+  thunder(delay = 0) {
+    if (!this.on) return;
+    const ctx = this.ctx, t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource(); src.buffer = this.noise; src.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1400, t); lp.frequency.exponentialRampToValueAtTime(90, t + 2.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(1.1, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.35, t + 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + 4.5);
+    src.connect(lp); lp.connect(g); g.connect(this.master); g.connect(this.verb);
+    src.start(t); src.stop(t + 4.6);
+  }
+}
+const sound = new Sound();
+const SCALE = [0, 3, 5, 7, 10];
+function tileFreq(i) {
+  const ix = i % N, iz = (i / N) | 0;
+  const deg = (ix * 3 + iz * 2) % 13;
+  return 196 * Math.pow(2, (SCALE[deg % 5] + 12 * Math.floor(deg / 5)) / 12);
+}
+
+/* ------------------------------------------------------------------ simulation */
+let time = 0, rate = 55, wind = 0, impacts = 0, spawnAcc = 0, waveAcc = 0;
+let autoStorm = false, nextStorm = 9 + rand() * 6;
+const flashes = [];
+const tmpV = new THREE.Vector3();
+
+function spawnDrop(o = {}) {
+  let d = null;
+  for (let k = 0; k < MAXD; k++) { const c = drops[(dCursor + k) % MAXD]; if (!c.on) { d = c; dCursor = (dCursor + k + 1) % MAXD; break; } }
+  if (!d) return;
+  let tile = o.tile ?? (rand() < 0.84 ? (rand() * TC) | 0 : -1), tx, tz, floor;
+  if (tile >= 0) { tx = tileX[tile]; tz = tileZ[tile]; floor = TOP; }
+  else {
+    do { tx = (rand() * 2 - 1) * HALF * 2.7; tz = (rand() * 2 - 1) * HALF * 2.7; }
+    while (Math.abs(tx) < HALF + 0.7 && Math.abs(tz) < HALF + 0.7);
+    floor = -1000;
+  }
+  const size = o.size ?? (0.55 + Math.pow(rand(), 3) * 1.3);
+  const speed = (15 + rand() * 9) * (0.85 + size * 0.2);
+  const H = o.H ?? (14 + rand() * 13);
+  const vx = wind * 9, vz = wind * 3.2, t = H / speed;
+  Object.assign(d, {
+    on: true, hit: false, tile, tx, tz, floor, size, age: 0,
+    x: tx - vx * t, y: TOP + H, z: tz - vz * t, vx, vy: -speed, vz,
+    len: (0.9 + rand() * 2.3) * (speed / 20) * (0.7 + size * 0.3),
+    w: 0.016 + size * 0.016,
+  });
+  d.c.copy(o.color || pick(PAL.rainC));
+}
+
+function impact(d) {
+  const i = d.tile, s = d.size, c = d.c;
+  glow[i * 3] = Math.min(2.2, glow[i * 3] + c.r * 1.1 * s);
+  glow[i * 3 + 1] = Math.min(2.2, glow[i * 3 + 1] + c.g * 1.1 * s);
+  glow[i * 3 + 2] = Math.min(2.2, glow[i * 3 + 2] + c.b * 1.1 * s);
+  core[i] = Math.min(1.4, core[i] + 0.8 * s);
+  wh[i] -= 0.45 * s;
+  const n = 2.6 + rand() * 2.6;
+  addRipple(d.tx, d.tz, c, time, 0.85 + 0.45 * s, 0.42 + 0.34 * s, s > 1.25 ? 1 : 0, n, 0.05, 1.0);
+  addRipple(d.tx, d.tz, c, time + 0.09, 1.0 + 0.4 * s, 0.6 + 0.3 * s, 0, n, 0.024, 0.35);
+  if (rand() < 0.4) addRipple(d.tx, d.tz, c.clone().lerp(WHITE, 0.6), time, 0.32, 0.17 + 0.05 * s, 2, 2, 0, 1.0);
+  splash(d.tx, d.tz, c, Math.round(4 + s * 7), s);
+  impacts++;
+  if (sound.on) {
+    tmpV.set(d.tx, TOP, d.tz).project(camera);
+    sound.pluck(tileFreq(i), tmpV.x, Math.min(1, 0.35 + 0.4 * s));
+  }
+}
+const WHITE = new THREE.Color(1, 1, 1);
+
+function thunder(tile) {
+  const i0 = tile ?? ((rand() * TC) | 0);
+  const ix0 = i0 % N, iz0 = (i0 / N) | 0;
+  const x = tileX[i0], z = tileZ[i0];
+  wh[i0] -= 1.6;
+  glow[i0 * 3] += 1.6; glow[i0 * 3 + 1] += 1.7; glow[i0 * 3 + 2] += 1.9;
+  core[i0] = 1.4;
+  const ice = new THREE.Color(0.85, 0.92, 1.0);
+  addRipple(x, z, ice, time, 1.6, 2.2, 1, 3.0, 0.07, 1.1);
+  addRipple(x, z, ice, time + 0.12, 2.0, 3.4, 0, 4.0, 0.04, 0.5);
+  splash(x, z, ice, 40, 2.0);
+  for (let k = 0; k < 26; k++) {
+    const ix = clamp(ix0 + Math.round((rand() * 2 - 1) * 4), 0, N - 1);
+    const iz = clamp(iz0 + Math.round((rand() * 2 - 1) * 4), 0, N - 1);
+    spawnDrop({ tile: iz * N + ix, H: 3 + rand() * 12, size: 0.9 + rand() * 0.8 });
+  }
+  impacts++;
+  sound.thunder(0.05);
+}
+
+function stepWave() {
+  // per-tile damped spring: the struck tile dips and settles, neighbours stay still
+  for (let i = 0; i < TC; i++) {
+    wv[i] = (wv[i] - wh[i] * 0.16) * 0.84;
+    wh[i] += wv[i];
+  }
+}
+
+function simulate(dt) {
+  time += dt;
+  U.uTime.value = time;
+
+  spawnAcc += rate * dt;
+  while (spawnAcc >= 1) { spawnDrop(); spawnAcc -= 1; }
+  if (autoStorm && time > nextStorm) { thunder(); nextStorm = time + 14 + rand() * 14; }
+
+  waveAcc += dt;
+  let steps = 0;
+  while (waveAcc >= 1 / 60 && steps < 4) { stepWave(); waveAcc -= 1 / 60; steps++; }
+  if (steps === 4) waveAcc = 0;
+
+  // rain
+  ant.fill(0);
+  const ip = RA.iPos.array, id = RA.iDir.array, ic = RA.iColor.array, ipr = RA.iParams.array;
+  let k = 0;
+  for (const d of drops) {
+    if (!d.on) continue;
+    d.age += dt;
+    d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+    if (!d.hit && d.y <= d.floor) { d.hit = true; impact(d); }
+    const sp = Math.hypot(d.vx, d.vy, d.vz);
+    const tailY = d.y - d.len * d.vy / sp;
+    if ((d.hit && tailY < d.floor) || d.y < -60) { d.on = false; continue; }
+    ip[k * 3] = d.x; ip[k * 3 + 1] = d.y; ip[k * 3 + 2] = d.z;
+    id[k * 3] = d.vx / sp; id[k * 3 + 1] = d.vy / sp; id[k * 3 + 2] = d.vz / sp;
+    ic[k * 4] = d.c.r; ic[k * 4 + 1] = d.c.g; ic[k * 4 + 2] = d.c.b; ic[k * 4 + 3] = Math.min(1, d.age / 0.3);
+    ipr[k * 3] = d.len; ipr[k * 3 + 1] = d.w; ipr[k * 3 + 2] = d.floor;
+    k++;
+  }
+  rainGeo.instanceCount = k;
+  for (const a of Object.values(RA)) a.needsUpdate = true;
+
+  // tiles
+  const gd = Math.exp(-dt * 1.7), cd = Math.exp(-dt * 3.2), bl = 1 - Math.exp(-dt * 2.5);
+  const off = aOff.array, ba = aBase.array, ga = aGlow.array;
+  for (let i = 0; i < TC; i++) {
+    const j = i * 3;
+    glow[j] *= gd; glow[j + 1] *= gd; glow[j + 2] *= gd; core[i] *= cd;
+    baseCur[j] += (baseTgt[j] - baseCur[j]) * bl;
+    baseCur[j + 1] += (baseTgt[j + 1] - baseCur[j + 1]) * bl;
+    baseCur[j + 2] += (baseTgt[j + 2] - baseCur[j + 2]) * bl;
+    off[j] = tileX[i]; off[j + 1] = wh[i] * 0.24; off[j + 2] = tileZ[i];
+    ba[j] = baseCur[j]; ba[j + 1] = baseCur[j + 1]; ba[j + 2] = baseCur[j + 2];
+    ga[i * 4] = glow[j];
+    ga[i * 4 + 1] = glow[j + 1];
+    ga[i * 4 + 2] = glow[j + 2];
+    ga[i * 4 + 3] = core[i];
+  }
+  aOff.needsUpdate = aBase.needsUpdate = aGlow.needsUpdate = true;
+
+  if (ripDirty) { for (const a of Object.values(PA)) a.needsUpdate = true; ripDirty = false; }
+
+  // splashes
+  const pp = spPos.array, pc = spCol.array, ps = spSize.array;
+  let m = 0;
+  for (let i = 0; i < MAXP; i++) {
+    if (!P.alive[i]) continue;
+    P.life[i] += dt;
+    if (P.life[i] > P.max[i]) { P.alive[i] = 0; continue; }
+    P.vy[i] -= 15 * dt;
+    P.x[i] += P.vx[i] * dt; P.y[i] += P.vy[i] * dt; P.z[i] += P.vz[i] * dt;
+    if (!P.bounced[i] && P.vy[i] < 0 && P.y[i] < TOP && Math.abs(P.x[i]) < HALF + 0.45 && Math.abs(P.z[i]) < HALF + 0.45) {
+      P.y[i] = TOP; P.vy[i] *= -0.32; P.vx[i] *= 0.55; P.vz[i] *= 0.55; P.bounced[i] = 1;
+    }
+    const f = 1 - P.life[i] / P.max[i];
+    pp[m * 3] = P.x[i]; pp[m * 3 + 1] = P.y[i]; pp[m * 3 + 2] = P.z[i];
+    pc[m * 4] = P.r[i]; pc[m * 4 + 1] = P.g[i]; pc[m * 4 + 2] = P.b[i]; pc[m * 4 + 3] = f * f;
+    ps[m] = P.size[i];
+    m++;
+  }
+  spGeo.setDrawRange(0, m);
+  spPos.needsUpdate = spCol.needsUpdate = spSize.needsUpdate = true;
+
+  // lightning flash
+  let fl = 0;
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const e = time - flashes[i].t;
+    if (e < 0) continue;
+    if (e > 1.5) { flashes.splice(i, 1); continue; }
+    fl = Math.max(fl, flashes[i].a * Math.exp(-e * 7));
+  }
+  U.uFlash.value = fl;
+  bgNow.copy(BG).lerp(FLASH_TINT, fl * 0.05);
+}
+const FLASH_TINT = new THREE.Color(0.55, 0.65, 1.0);
+
+/* ------------------------------------------------------------------ camera choreography */
+const SHOTS = {
+  iso:   { theta: Math.PI / 4, phi: 0.9553, radius: 39, fov: 30, ty: 0 },
+  top:   { theta: 0, phi: 0.002, radius: 41, fov: 30, ty: 0 },
+  low:   { theta: Math.PI / 4 + 0.42, phi: 1.33, radius: 21, fov: 44, ty: 2.4 },
+  orbit: { theta: Math.PI / 4, phi: 1.02, radius: 33, fov: 34, ty: 0.4 },
+};
+const SHOT_NAMES = { auto: '自动', iso: '等距', top: '俯视', low: '低空', orbit: '环绕' };
+const AUTO = [['iso', 10], ['top', 9], ['low', 10], ['orbit', 13]];
+let shotMode = REDUCED ? 'iso' : 'auto', autoIdx = 0, autoT = 0, orbitStart = 0;
+const cur = { ...SHOTS.iso };
+const offs = { th: 0, ph: 0, zoom: 1 };
+let dragging = false, lastInteract = -99;
+
+function currentShotName() { return shotMode === 'auto' ? AUTO[autoIdx][0] : shotMode; }
+function updateCamera(dt, realDt) {
+  if (shotMode === 'auto') {
+    autoT += realDt;
+    if (autoT > AUTO[autoIdx][1]) {
+      autoT = 0; autoIdx = (autoIdx + 1) % AUTO.length;
+      if (AUTO[autoIdx][0] === 'orbit') orbitStart = time;
+    }
+  }
+  const name = currentShotName();
+  const tgt = { ...SHOTS[name] };
+  if (name === 'orbit') tgt.theta = SHOTS.orbit.theta + (time - orbitStart) * 0.11;
+  const k = 1 - Math.exp(-dt * 1.35);
+  for (const key in tgt) cur[key] += (tgt[key] - cur[key]) * k;
+  if (!dragging && time - lastInteract > 3) {
+    const dk = Math.exp(-dt * 0.9);
+    offs.th *= dk; offs.ph *= dk;
+  }
+  const aspect = innerWidth / innerHeight;
+  const fit = aspect < 1 ? Math.pow(1 / aspect, 0.8) : 1;
+  const th = cur.theta + offs.th, ph = clamp(cur.phi + offs.ph, 0.002, 1.48), r = cur.radius * offs.zoom * fit;
+  camera.position.set(r * Math.sin(ph) * Math.sin(th), r * Math.cos(ph) + cur.ty, r * Math.sin(ph) * Math.cos(th));
+  camera.lookAt(0, cur.ty, 0);
+  camera.fov = cur.fov;
+  camera.updateProjectionMatrix();
+  U.uFogNear.value = r * 0.95;
+  U.uFogFar.value = r * 2.6;
+  uScale.value = (innerHeight * DPR * 0.5) / Math.tan(THREE.MathUtils.degToRad(cur.fov) / 2);
+}
+
+/* ------------------------------------------------------------------ post */
+const rt = new THREE.WebGLRenderTarget(innerWidth * DPR, innerHeight * DPR, { type: THREE.HalfFloatType, samples: 4 });
+const composer = new EffectComposer(renderer, rt);
+composer.setPixelRatio(DPR);
+composer.setSize(innerWidth, innerHeight);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.62, 0.32, 0.16);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+const finalPass = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, uTime: U.uTime, uFlash: U.uFlash, uRes: { value: new THREE.Vector2(innerWidth * DPR, innerHeight * DPR) } },
+  vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse; uniform float uTime; uniform float uFlash; uniform vec2 uRes;
+    varying vec2 vUv;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main(){
+      vec2 c = vUv - 0.5; float r2 = dot(c, c);
+      vec2 o = c * r2 * 0.014;
+      vec3 col = vec3(texture2D(tDiffuse, vUv + o).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - o).b);
+      col *= 1.0 - smoothstep(0.16, 0.72, r2) * 0.6;
+      col += vec3(0.55, 0.64, 0.85) * uFlash * 0.09;
+      col += (hash(vUv * uRes + fract(uTime * 7.13) * 91.0) - 0.5) * 0.014;
+      col = max(col, vec3(0.0));
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+composer.addPass(finalPass);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+  bloom.setSize(w, h);
+  finalPass.uniforms.uRes.value.set(w * DPR, h * DPR);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+/* ------------------------------------------------------------------ interaction */
+const raycaster = new THREE.Raycaster();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -TOP);
+const ndc = new THREE.Vector2(), hitPt = new THREE.Vector3();
+let downX = 0, downY = 0, lastX = 0, lastY = 0, moved = 0, pointerId = null;
+
+canvas.addEventListener('pointerdown', (e) => {
+  pointerId = e.pointerId; canvas.setPointerCapture(e.pointerId);
+  downX = lastX = e.clientX; downY = lastY = e.clientY; moved = 0; dragging = true;
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!dragging || e.pointerId !== pointerId) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  moved += Math.abs(dx) + Math.abs(dy);
+  if (moved > 6) {
+    canvas.classList.add('dragging');
+    offs.th -= dx * 0.0055; offs.ph = clamp(offs.ph - dy * 0.0045, -1.5, 1.5);
+    lastInteract = time;
+  }
+});
+const endDrag = (e) => {
+  if (!dragging || e.pointerId !== pointerId) return;
+  dragging = false; canvas.classList.remove('dragging');
+  if (moved <= 6) callRain(e.clientX, e.clientY, e.shiftKey);
+  lastInteract = time;
+};
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', (e) => { dragging = false; canvas.classList.remove('dragging'); });
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  offs.zoom = clamp(offs.zoom * Math.exp(e.deltaY * 0.001), 0.45, 1.9);
+}, { passive: false });
+
+function callRain(cx, cy, bolt) {
+  ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  if (!raycaster.ray.intersectPlane(groundPlane, hitPt)) return;
+  const ix = Math.round((hitPt.x + HALF) / SP), iz = Math.round((hitPt.z + HALF) / SP);
+  if (ix < 0 || iz < 0 || ix >= N || iz >= N) return;
+  const t0 = iz * N + ix;
+  if (bolt) { thunder(t0); return; }
+  spawnDrop({ tile: t0, H: 6, size: 1.9 });
+  for (let k = 0; k < 7; k++) {
+    const jx = clamp(ix + Math.round((rand() * 2 - 1) * 1.6), 0, N - 1);
+    const jz = clamp(iz + Math.round((rand() * 2 - 1) * 1.6), 0, N - 1);
+    spawnDrop({ tile: jz * N + jx, H: 7 + k * 1.6 + rand() * 2, size: 0.8 + rand() * 0.6 });
+  }
+}
+
+/* ------------------------------------------------------------------ UI */
+const rateIn = $('#rate'), windIn = $('#wind');
+function syncRate() { rate = +rateIn.value; $('#o-rate').textContent = `${rate} 滴/秒`; sound.setRate(); }
+function syncWind() {
+  wind = +windIn.value / 100;
+  const v = Math.abs(windIn.value);
+  $('#o-wind').textContent = v < 3 ? '无风' : `${wind < 0 ? '← 西' : '东 →'} ${v}%`;
+}
+rateIn.addEventListener('input', syncRate);
+windIn.addEventListener('input', syncWind);
+
+function setShot(name) {
+  shotMode = name; autoT = 0;
+  if (name === 'auto') autoIdx = 0;
+  if (name === 'orbit' || (name === 'auto' && AUTO[0][0] === 'orbit')) orbitStart = time;
+  document.querySelectorAll('#shots .chip').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.shot === name)));
+}
+document.querySelectorAll('#shots .chip').forEach((b) => b.addEventListener('click', () => setShot(b.dataset.shot)));
+
+const palWrap = $('#pals');
+for (const [key, p] of Object.entries(PALETTES)) {
+  const b = document.createElement('button');
+  b.className = 'chip'; b.dataset.pal = key; b.setAttribute('aria-pressed', String(key === 'neon'));
+  const sw = document.createElement('span'); sw.className = 'sw';
+  sw.style.background = `linear-gradient(90deg, ${p.tiles.slice(0, 4).join(', ')})`;
+  b.append(sw, document.createTextNode(p.name));
+  b.addEventListener('click', () => {
+    setPalette(key);
+    palWrap.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', String(c === b)));
+  });
+  palWrap.append(b);
+}
+
+const bSound = $('#b-sound'), bStorm = $('#b-storm');
+function toggleSound() { const on = sound.toggle(); bSound.setAttribute('aria-pressed', String(on)); bSound.textContent = on ? '声音 开' : '声音'; }
+bSound.addEventListener('click', toggleSound);
+bStorm.addEventListener('click', () => { autoStorm = !autoStorm; bStorm.setAttribute('aria-pressed', String(autoStorm)); if (autoStorm) nextStorm = time + 4; });
+$('#b-thunder').addEventListener('click', () => thunder());
+$('#b-hide').addEventListener('click', () => document.body.classList.add('ui-off'));
+const panel = $('#panel'), bCol = $('#b-collapse');
+function setCollapsed(c) { panel.classList.toggle('collapsed', c); bCol.textContent = c ? '展开' : '收起'; bCol.setAttribute('aria-expanded', String(!c)); }
+bCol.addEventListener('click', () => setCollapsed(!panel.classList.contains('collapsed')));
+if (innerWidth < 560) setCollapsed(true);
+
+addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement && e.key !== ' ') return;
+  if (e.target instanceof HTMLButtonElement && (e.key === ' ' || e.key === 'Enter')) return;
+  const map = { '1': 'auto', '2': 'iso', '3': 'top', '4': 'low', '5': 'orbit' };
+  if (map[e.key]) setShot(map[e.key]);
+  else if (e.key === ' ') { e.preventDefault(); thunder(); }
+  else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('ui-off');
+  else if (e.key === 's' || e.key === 'S') toggleSound();
+});
+if (REDUCED) setShot('iso');
+
+/* ------------------------------------------------------------------ boot */
+setPalette('neon');
+baseCur.set(baseTgt);
+for (let i = 0; i < 200; i++) simulate(1 / 60);   // pre-warm so the first frame is already raining
+impacts = 0;
+updateCamera(10, 0);
+
+const rShot = $('#r-shot'), rRate = $('#r-rate'), rHits = $('#r-hits');
+let hudT = 0;
+const clock = new THREE.Clock();
+function frame() {
+  const realDt = Math.min(clock.getDelta(), 0.05);
+  simulate(realDt);
+  updateCamera(realDt, realDt);
+  composer.render(realDt);
+  hudT += realDt;
+  if (hudT > 0.25) {
+    hudT = 0;
+    rShot.textContent = shotMode === 'auto' ? `自动 · ${SHOT_NAMES[currentShotName()]}` : SHOT_NAMES[shotMode];
+    rRate.textContent = rate;
+    rHits.textContent = impacts.toLocaleString('zh-CN');
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// test / automation hook
+window.__rain = { setShot, thunder, simulate, setPalette, snap(n) { setShot(n); Object.assign(cur, SHOTS[n]); offs.th = offs.ph = 0; }, get time() { return time; } };
+</script>
+
+</body>
+</html>
